@@ -1,0 +1,157 @@
+const express = require("express");
+const app = express();
+const mongoose = require("mongoose");
+const bcrypt = require("bcryptjs");
+const jwt=require("jsonwebtoken");
+require('dotenv').config();
+
+// Middlleware ----
+
+app.use(express.json());
+
+// Data base connection ----
+
+async function connectToDatabase() {
+  try {
+    await mongoose.connect("mongodb://localhost:27017/auth-demo");
+    console.log("Connection successful");
+  } catch (error) {
+    console.error("Connection error:", error);
+  }
+}
+
+// Call the async function to connect to the database
+connectToDatabase();
+
+
+
+// create user schema ---
+
+const userSchema = mongoose.Schema(
+  {
+    name: {
+      type: String,
+      required: true,
+    },
+    email: {
+      type: String,
+      required: true,
+    },
+    password: {
+      type: String,
+      required: [true, "paasword is Mmandatory"],
+    },
+  },
+  { timestamps: true }
+);
+
+// Model for users   -----
+
+const UserModel = mongoose.model("Users", userSchema);
+
+// Middleware for user registration
+async function registerUserMiddleware(req, res, next) {
+  const { name, email, password } = req.body;
+
+  try {
+    // hashing the password before going to the database
+    const salt = await bcrypt.genSalt(10);
+    const hash_pass = await bcrypt.hash(password, salt);
+
+    // Create a new user in the database
+    const data = await UserModel.create({
+      name,
+      email,
+      password: hash_pass, // Use the hashed password here
+    });
+
+    // If user creation is successful, call the next middleware
+    next();
+  } catch (error) {
+    console.error("Error creating user:", error);
+    res.status(400).json({
+      message: "User not registered",
+      error: error,
+    });
+  }
+}
+
+// Register route using the registerUser middleware
+app.post("/register", registerUserMiddleware, (req, res) => {
+  // If registration middleware succeeds, send a success response
+  res.status(200).json({ message: "User registered successfully" });
+});
+
+
+
+// Function to generate JWT token asynchronously
+async function generateJWTToken(email) {
+  return new Promise((resolve, reject) => {
+    jwt.sign({ email }, "My_Secret_Key", { expiresIn: "1h" }, (err, token) => {
+            // 1.information related to user for whome we are creating the token 2.secret key 3.expiration time   
+      if (err) {
+        reject(err);
+      }
+      else {
+        resolve(token);
+      }
+    });
+  });
+}
+
+// Login Route
+app.post("/login", authenticate, async (req, res) => {
+  try {
+    // Generate a JWT token for the user
+    const token = await generateJWTToken(req.user.email);
+
+    // Return success message along with the token
+    res.status(200).json({ message: "Login successful. Welcome back!", token });
+  } catch (error) {
+    console.error("Error during login:", error);
+    res.status(500).json({ message: "Internal Server Error" });
+  }
+});
+
+
+// Middleware for authentication authorization
+async function authenticate(req, res, next) {
+  const { email, password } = req.body;
+
+  try {
+    // Check if a user with the provided email exists in the database
+    const user = await UserModel.findOne({ email });
+
+    if (!user) {
+      // If no user found with the provided email, return an error
+      return res.status(401).json({ message: "Invalid email or password" });
+    }
+
+    // Compare the provided password with the hashed password stored in the database
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+
+    if (!isPasswordValid) {
+      // If passwords don't match, return an error
+      return res.status(401).json({ message: "Invalid email or password" });
+    }
+
+    // Attach the user object to the request for further use
+    req.user = user;
+
+    // If authentication is successful, call the next middleware
+    next();
+  } 
+   catch (error) {
+    console.error("Error during authentication:", error);
+    res.status(500).json({ message: "Internal Server Error" });
+  }
+}
+
+
+
+
+
+
+app.listen(5000, () => {
+  console.log("Server is Running on port 5000");
+});
